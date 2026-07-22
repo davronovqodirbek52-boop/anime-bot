@@ -12,26 +12,48 @@ from aiogram.types import (
     InlineKeyboardButton
 )
 
-# Bot tokeningiz
+# ----------------- SOZLAMALAR (SIZNING MA'LUMOTLARINGIZ) -----------------
 BOT_TOKEN = "8969086805:AAFj-zP5r_pavuU-HGey1r06s9aeZfDZer4"
 
-# Bot va Dispatcher
+# Telegram ID va ma'lumotlaringiz
+ADMIN_ID = 5573432777  # Telegram ID ingiz (Skrinshotlar sizga keladi)
+ADMIN_USERNAME = "@fx_davronov"
+
+# Karta raqamlaringiz
+CARD_NUMBER_1 = "9860 3501 4415 0116"
+CARD_NUMBER_2 = "9860 1966 1783 5455"
+CARD_OWNER = "Davronov"
+VIP_PRICE = "15,000 so'm / oyiga"
+
+# Maxfiy kanal ID'si (Treylerlar boradigan kanal - bot u yerda admin bo'lishi shart!)
+# O'zingizning kanal ID'ingiz bilan almashtiring:
+PRIVATE_CHANNEL_ID = -100123456789  
+# ----------------------------------------------------------------------
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # Ma'lumotlar bazasi (Xotirada)
-VIP_USERS = set()      # VIP foydalanuvchilar ID'lari
-MOVIES = {}            # Kinolar kodi va ma'lumotlari
-BLOCKED_USERS = set()  # Bloklangan foydalanuvchilar
+VIP_USERS = set()         # VIP foydalanuvchilar
+SUBSCRIBED_USERS = set()  # Kanalga 1 marta ko'rsatilganlar
+MOVIES = {}               # Kinolar ro'yxati
 
-# Kino qo'shish bosqichlari (FSM)
+# FSM Bosqichlari
 class AddMovieState(StatesGroup):
     waiting_for_code = State()
     waiting_for_title = State()
     waiting_for_video = State()
-    waiting_for_trailer = State()
+    waiting_for_trailer_video = State()
 
-# 🎨 Zamonaviy Admin menyu tugmalari (Sizning barcha eski tugmalaringiz bilan)
+class VIPPaymentState(StatesGroup):
+    waiting_for_screenshot = State()
+
+# --- TUGMALAR ---
+cancel_btn = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="⬅️ Ortga")]],
+    resize_keyboard=True
+)
+
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⚡ Kino Qo'shish & Treyler"), KeyboardButton(text="🗑️ Kino o'chirish")],
@@ -39,14 +61,13 @@ admin_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="👨‍💼 Adminlar"), KeyboardButton(text="💬 Kanallar")],
         [KeyboardButton(text="🔴 Blocklash"), KeyboardButton(text="🟢 Blockdan olish")]
     ],
-    resize_keyboard=True,
-    input_field_placeholder="Kerakli bo'limni tanlang..."
+    resize_keyboard=True
 )
 
-# 🎬 Oddiy foydalanuvchi tugmalari
 user_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🔍 Kino Qidirish"), KeyboardButton(text="💎 VIP Obuna Haqida")]
+        [KeyboardButton(text="🔍 Kino Qidirish"), KeyboardButton(text="🍿 VIP Obuna Bo'lish")],
+        [KeyboardButton(text="✍️ Adminga Yozish / Shikoyat")]
     ],
     resize_keyboard=True
 )
@@ -54,141 +75,230 @@ user_keyboard = ReplyKeyboardMarkup(
 # /start komandasi
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    welcome_text = (
+    user_id = message.from_user.id
+    
+    # Administratorni tanish
+    if user_id == ADMIN_ID:
+        await message.answer(f"<b>Xush kelibsiz, Bosh Admin {message.from_user.first_name}!</b> 👑", reply_markup=admin_keyboard, parse_mode="HTML")
+        return
+
+    # Oddiy foydalanuvchiga kanalga ulanishni FAQAT 1 MARTA ko'rsatish
+    if user_id not in SUBSCRIBED_USERS:
+        SUBSCRIBED_USERS.add(user_id)
+        inline_sub = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📢 Rasmiy Kanalga Ulanish", url="https://t.me/fx_davronov")],
+                [InlineKeyboardButton(text="✅ A'zo bo'ldim", callback_data="check_sub")]
+            ]
+        )
+        await message.answer("⚠️ Botdan foydalanish uchun rasmiy kanalimizga a'zo bo'ling:", reply_markup=inline_sub)
+        return
+
+    await message.answer(
         f"<b>Assalomu alaykum, {message.from_user.first_name}!</b> ✨\n\n"
         "🍿 <b>Anime & Cinema Botiga xush kelibsiz!</b>\n"
-        "Kino kodini yuboring va tomosha qiling!\n\n"
-        "<i>VIP a'zolar esa eng yangi premyera treylerlarini 1-bo'lib olishadi!</i>"
+        "Kino kodini yuboring va tomosha qiling!",
+        reply_markup=user_keyboard, parse_mode="HTML"
     )
-    await message.answer(welcome_text, reply_markup=admin_keyboard, parse_mode="HTML")
 
-# --- 🎬 KINO QO'SHISH JARAYONI ---
+@dp.callback_query(F.data == "check_sub")
+async def sub_callback(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await callback.message.answer("✅ Rahmat! Endi botdan to'liq foydalanishingiz mumkin.", reply_markup=user_keyboard)
+
+# ⬅️ Ortga tugmasi
+@dp.message(F.text == "⬅️ Ortga")
+async def cancel_handler(message: types.Message, state: FSMContext):
+    await state.clear()
+    kb = admin_keyboard if message.from_user.id == ADMIN_ID else user_keyboard
+    await message.answer("Bosh menyuga qaytdingiz.", reply_markup=kb)
+
+# --- 🎬 KINO QO'SHISH (QAT'IY TEKSHIRUV VA KANALGA OTISH) ---
 
 @dp.message(F.text == "⚡ Kino Qo'shish & Treyler")
 async def start_add_movie(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
     await state.set_state(AddMovieState.waiting_for_code)
-    await message.answer("🔑 <b>Yangi kino uchun KOD kiriting:</b>\n<i>(Masalan: 101)</i>", parse_mode="HTML")
+    await message.answer("🔑 <b>Kino uchun FAQAT SONLARDAN iborat KOD kiriting:</b>\n<i>(Masalan: 101)</i>", reply_markup=cancel_btn, parse_mode="HTML")
 
+# 1. Kod tekshirish (faqat raqam)
 @dp.message(AddMovieState.waiting_for_code)
 async def process_code(message: types.Message, state: FSMContext):
+    if not message.text or not message.text.isdigit():
+        await message.answer("❌ <b>Xato buyruq!</b> Iltimos, faqat raqamlardan iborat kod kiriting (masalan: 101):", reply_markup=cancel_btn, parse_mode="HTML")
+        return
+    
     await state.update_data(code=message.text.strip())
     await state.set_state(AddMovieState.waiting_for_title)
-    await message.answer("📝 <b>Kino NOMINI kiriting:</b>\n<i>(Masalan: Attack on Titan)</i>", parse_mode="HTML")
+    await message.answer("📝 <b>Kino NOMINI kiriting:</b>", reply_markup=cancel_btn, parse_mode="HTML")
 
+# 2. Nomini tekshirish
 @dp.message(AddMovieState.waiting_for_title)
 async def process_title(message: types.Message, state: FSMContext):
+    if not message.text or message.text == "⬅️ Ortga":
+        await message.answer("❌ <b>Xato buyruq!</b> Matn shaklida kino nomini kiriting:", reply_markup=cancel_btn, parse_mode="HTML")
+        return
+    
     await state.update_data(title=message.text.strip())
     await state.set_state(AddMovieState.waiting_for_video)
-    await message.answer("📹 <b>Kino VIDEO faylini yuboring:</b>", parse_mode="HTML")
+    await message.answer("📹 <b>Kino VIDEO faylini yuboring:</b>", reply_markup=cancel_btn, parse_mode="HTML")
 
-@dp.message(AddMovieState.waiting_for_video, F.video)
+# 3. Kino videosini tekshirish
+@dp.message(AddMovieState.waiting_for_video)
 async def process_video(message: types.Message, state: FSMContext):
-    await state.update_data(file_id=message.video.file_id)
-    await state.set_state(AddMovieState.waiting_for_trailer)
-    await message.answer("🍿 <b>Kino TREYLER havolasini (linkini) yuboring:</b>\n<i>(Masalan: https://youtube.com/...)</i>", parse_mode="HTML")
+    if not message.video:
+        await message.answer("❌ <b>Xato buyruq!</b> Iltimos, kino video faylini yuboring:", reply_markup=cancel_btn, parse_mode="HTML")
+        return
 
-@dp.message(AddMovieState.waiting_for_trailer)
-async def process_trailer(message: types.Message, state: FSMContext):
-    trailer_url = message.text.strip()
+    await state.update_data(file_id=message.video.file_id)
+    await state.set_state(AddMovieState.waiting_for_trailer_video)
+    await message.answer("🍿 <b>Endi Kino TREYLER faylini (video shaklida) yuboring:</b>", reply_markup=cancel_btn, parse_mode="HTML")
+
+# 4. Treyler videosini tekshirish va avtomatik kanalga tashlash
+@dp.message(AddMovieState.waiting_for_trailer_video)
+async def process_trailer_video(message: types.Message, state: FSMContext):
+    if not message.video:
+        await message.answer("❌ <b>Xato buyruq!</b> Iltimos, treylerning VIDEO faylini yuboring:", reply_markup=cancel_btn, parse_mode="HTML")
+        return
+
     data = await state.get_data()
-    
     code = data['code']
     title = data['title']
     file_id = data['file_id']
+    trailer_file_id = message.video.file_id
+
+    # Treylerni maxfiy kanalga avtomatik tashlash
+    try:
+        await bot.send_video(
+            chat_id=PRIVATE_CHANNEL_ID,
+            video=trailer_file_id,
+            caption=f"🍿 <b>{title}</b> - Treyler\n🔑 Kodi: <code>{code}</code>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"Kanalga yuborishda xato (Kanal ID noto'g'ri bo'lishi mumkin): {e}")
 
     # Bazaga saqlash
     MOVIES[code] = {
         "title": title,
         "file_id": file_id,
-        "trailer": trailer_url
+        "trailer_id": trailer_file_id
     }
     
     await state.clear()
-    await message.answer(f"✅ <b>Kino muvaffaqiyatli saqlandi!</b>\n\n🔑 Kodi: <code>{code}</code>\n🎬 Nomi: {title}", parse_mode="HTML")
+    await message.answer(f"✅ <b>Kino va Treyler muvaffaqiyatli saqlandi!</b>\n\n🔑 Kodi: <code>{code}</code>\n🎬 Nomi: {title}", reply_markup=admin_keyboard, parse_mode="HTML")
 
-    # VIP a'zolarga bildirishnoma yuborish
-    trailer_inline_btn = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🍿 Treylerni Ko'rish", url=trailer_url)]
-        ]
-    )
-
-    vip_count = 0
+    # VIP a'zolarga treylerni yuborish
     for vip_id in VIP_USERS:
         try:
             vip_text = (
-                "🎉 <b>YANGI PREMYERA YUKLANDI!</b> (VIP Bildirishnoma)\n\n"
+                "🎉 <b>YANGI PREMYERA TREYLERI!</b> (VIP Bildirishnoma)\n\n"
                 f"🎬 <b>Nomi:</b> {title}\n"
-                f"🔑 <b>Kino kodi:</b> <code>{code}</code>\n\n"
-                "<i>Siz VIP a'zo bo'lganingiz uchun bu bildirishnoma 1-bo'lib sizga yetib keldi!</i> 🚀"
+                f"🔑 <b>Kino kodi:</b> <code>{code}</code>"
             )
-            await bot.send_message(chat_id=vip_id, text=vip_text, reply_markup=trailer_inline_btn, parse_mode="HTML")
-            vip_count += 1
+            await bot.send_video(chat_id=vip_id, video=trailer_file_id, caption=vip_text, parse_mode="HTML")
         except Exception:
             pass
 
-# --- 🛠 ESKI BO'LIMLAR (SIZNING TUGMALARINGIZ) ---
+# --- 💎 VIP OBUNA VA TO'LOV TIZIMI ---
+
+@dp.message(F.text == "🍿 VIP Obuna Bo'lish")
+async def vip_info(message: types.Message):
+    info_text = (
+        f"💎 <b>VIP Obuna afzalliklari:</b>\n"
+        f"• Yangi kinolar treylerlarini 1-bo'lib olasiz!\n"
+        f"• Maxsus eksklyuziv premyeralarni tomosha qilasiz.\n\n"
+        f"💵 <b>Narxi:</b> {VIP_PRICE}\n\n"
+        f"Ulanish uchun pastdagi <b>'💳 Ulash va To'lov'</b> tugmasini bosing."
+    )
+    btn = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="💳 Ulash va To'lov", callback_data="buy_vip")]]
+    )
+    await message.answer(info_text, reply_markup=btn, parse_mode="HTML")
+
+@dp.callback_query(F.data == "buy_vip")
+async def buy_vip_callback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.delete()
+    await state.set_state(VIPPaymentState.waiting_for_screenshot)
+    
+    pay_text = (
+        f"💳 <b>To'lov ma'lumotlari:</b>\n\n"
+        f"1️⃣ Karta: <code>{CARD_NUMBER_1}</code>\n"
+        f"2️⃣ Karta: <code>{CARD_NUMBER_2}</code>\n"
+        f"👤 Egasining ismi: <b>{CARD_OWNER}</b>\n"
+        f"💵 Summa: <b>{VIP_PRICE}</b>\n\n"
+        f"To'lovni amalga oshirib, <b>chek (skrinshot) faylini yuboring!</b>"
+    )
+    await callback.message.answer(pay_text, reply_markup=cancel_btn, parse_mode="HTML")
+
+# Skrinshotni qabul qilish va Adminga (sizga) yuborish
+@dp.message(VIPPaymentState.waiting_for_screenshot)
+async def process_screenshot(message: types.Message, state: FSMContext):
+    if not message.photo:
+        await message.answer("❌ <b>Xato buyruq!</b> Iltimos, to'lov cheki skrinshotini (rasm shaklida) yuboring:", reply_markup=cancel_btn, parse_mode="HTML")
+        return
+
+    photo_id = message.photo[-1].file_id
+    user = message.from_user
+
+    # Adminga tasdiqlash tugmalari bilan yuborish
+    admin_btn = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Tasdiqlash (VIP berish)", callback_data=f"approve_{user.id}"),
+                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"reject_{user.id}")
+            ]
+        ]
+    )
+
+    caption = (
+        f"💳 <b>Yangi VIP to'lov cheki!</b>\n\n"
+        f"👤 Foydalanuvchi: {user.full_name} (@{user.username})\n"
+        f"🆔 ID: <code>{user.id}</code>"
+    )
+
+    await bot.send_photo(chat_id=ADMIN_ID, photo=photo_id, caption=caption, reply_markup=admin_btn, parse_mode="HTML")
+    await state.clear()
+    await message.answer("⏳ <b>To'lov cheki adminga yuborildi!</b>\nTekshirib bo'lingach, VIP obunangiz faollashtiriladi.", reply_markup=user_keyboard, parse_mode="HTML")
+
+# Admin tasdiqlashi yoki rad etishi
+@dp.callback_query(F.data.startswith("approve_"))
+async def approve_vip(callback: types.CallbackQuery):
+    user_id = int(callback.data.split("_")[1])
+    VIP_USERS.add(user_id)
+    
+    await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ <b>VIP TASDIQLANDI!</b>", parse_mode="HTML")
+    await bot.send_message(chat_id=user_id, text="🎉 <b>Tabriklaymiz! VIP obunangiz faollashtirildi!</b>", reply_markup=user_keyboard, parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("reject_"))
+async def reject_vip(callback: types.CallbackQuery):
+    user_id = int(callback.data.split("_")[1])
+    
+    await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ <b>TO'LOV RAD ETILDI!</b>", parse_mode="HTML")
+    await bot.send_message(chat_id=user_id, text="❌ Siz yuborgan to'lov cheki rad etildi. Savollaringiz bo'lsa adminga murojaat qiling.", reply_markup=user_keyboard, parse_mode="HTML")
+
+# --- ✍️ ADMINGA YOZISH / SHIKOYAT ---
+
+@dp.message(F.text == "✍️ Adminga Yozish / Shikoyat")
+async def contact_admin(message: types.Message):
+    await message.answer(f"💬 Savol yoki murojaatingiz bo'lsa adminga yozing:\n\n👨‍💻 Admin: {ADMIN_USERNAME}", parse_mode="HTML")
+
+# --- 📊 BOSHQA ADMIN BO'LIMLARI ---
 
 @dp.message(F.text == "📊 Statistika")
 async def show_stats(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
     await message.answer(
         f"📊 <b>Bot statistikasi:</b>\n\n"
         f"🎬 Jami kinolar: <b>{len(MOVIES)} ta</b>\n"
-        f"💎 VIP foydalanuvchilar: <b>{len(VIP_USERS)} ta</b>\n"
-        f"🚫 Bloklanganlar: <b>{len(BLOCKED_USERS)} ta</b>", 
+        f"💎 VIP a'zolar: <b>{len(VIP_USERS)} ta</b>", 
         parse_mode="HTML"
     )
 
-@dp.message(F.text == "🗑️ Kino o'chirish")
-async def delete_movie(message: types.Message):
-    await message.answer("🗑️ Kino o'chirish bo'limi...\n<i>O'chirmoqchi bo'lgan kino kodini kiriting.</i>", parse_mode="HTML")
+# --- 🎬 KINO QIDIRISH ---
 
-@dp.message(F.text == "👨‍💼 Adminlar")
-async def manage_admins(message: types.Message):
-    await message.answer("👨‍💼 Adminlar boshqaruvi bo'limi.")
-
-@dp.message(F.text == "💬 Kanallar")
-async def manage_channels(message: types.Message):
-    await message.answer("💬 Majburiy obuna kanallari sozlamalari.")
-
-@dp.message(F.text == "🔴 Blocklash")
-async def block_user(message: types.Message):
-    await message.answer("🔴 Bloklash bo'limi...")
-
-@dp.message(F.text == "🟢 Blockdan olish")
-async def unblock_user(message: types.Message):
-    await message.answer("🟢 Blokdan chiqarish bo'limi...")
-
-@dp.message(F.text == "💎 VIP Boshqaruv")
-async def vip_management(message: types.Message):
-    await message.answer(
-        "💎 <b>VIP Boshqaruv:</b>\n\n"
-        "VIP qo'shish uchun: <code>/addvip USER_ID</code>\n"
-        "VIP o'chirish uchun: <code>/delvip USER_ID</code>", 
-        parse_mode="HTML"
-    )
-
-# --- 💎 VIP QO'SHISH VA O'CHIRISH COMMANDALARI ---
-
-@dp.message(Command("addvip"))
-async def add_vip_user(message: types.Message):
-    try:
-        user_id = int(message.text.split()[1])
-        VIP_USERS.add(user_id)
-        await message.answer(f"✅ <b>{user_id}</b> VIP a'zolarga qo'shildi!", parse_mode="HTML")
-    except Exception:
-        await message.answer("⚠️ Qo'llanilishi: <code>/addvip USER_ID</code>", parse_mode="HTML")
-
-@dp.message(Command("delvip"))
-async def del_vip_user(message: types.Message):
-    try:
-        user_id = int(message.text.split()[1])
-        VIP_USERS.discard(user_id)
-        await message.answer(f"❌ <b>{user_id}</b> VIP ro'yxatidan olib tashlandi!", parse_mode="HTML")
-    except Exception:
-        await message.answer("⚠️ Qo'llanilishi: <code>/delvip USER_ID</code>", parse_mode="HTML")
-
-# Foydalanuvchi kino kodini yuborganda kinoni chiqarish
 @dp.message()
 async def get_movie_by_code(message: types.Message):
     code = message.text.strip()
@@ -200,12 +310,12 @@ async def get_movie_by_code(message: types.Message):
             parse_mode="HTML"
         )
     else:
-        await message.answer(f"Siz yozdingiz: {message.text}\n\n<i>Kino kodi kiritilsa kino chiqarib beriladi!</i>", parse_mode="HTML")
+        await message.answer("❌ Bunday kodli kino topilmadi. Qaytadan tekshirib ko'ring!")
 
-# Botni ishga tushirish funksiyasi
+# Botni ishga tushirish
 async def main():
     logging.basicConfig(level=logging.INFO)
-    print("Bot ishga tushdi...")
+    print("Bot muvaffaqiyatli ishga tushdi...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
