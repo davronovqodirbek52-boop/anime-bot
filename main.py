@@ -16,8 +16,8 @@ BOT_TOKEN = "8969086805:AAFj-zP5r_pavuU-HGey1r06s9aeZfDZer4"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Vaqtinchalik VIP foydalanuvchilar va Kinolar bazasi (Soddalashtirilgan)
-VIP_USERS = set()  # VIP foydalanuvchilar Telegram ID'lari saqlanadi
+# Vaqtinchalik VIP foydalanuvchilar va Kinolar bazasi
+VIP_USERS = set()  # VIP foydalanuvchilar Telegram ID'lari
 MOVIES = {}         # Kinolar kodi va ma'lumotlari
 
 # 🎨 Zamonaviy Admin menyu tugmalari
@@ -60,7 +60,7 @@ async def add_vip_user(message: types.Message):
         VIP_USERS.add(user_id)
         await message.answer(f"✅ <b>{user_id}</b> muvaffaqiyatli VIP a'zolar ro'yxatiga qo'shildi!", parse_mode="HTML")
     except (IndexError, ValueError):
-        await message.answer("⚠️ Qullanilishi: <code>/addvip USER_ID</code>", parse_mode="HTML")
+        await message.answer("⚠️ Qo'llanilishi: <code>/addvip USER_ID</code>", parse_mode="HTML")
 
 @dp.message(Command("delvip"))
 async def del_vip_user(message: types.Message):
@@ -69,17 +69,15 @@ async def del_vip_user(message: types.Message):
         VIP_USERS.discard(user_id)
         await message.answer(f"❌ <b>{user_id}</b> VIP statusidan olib tashlandi!", parse_mode="HTML")
     except (IndexError, ValueError):
-        await message.answer("⚠️ Qullanilishi: <code>/delvip USER_ID</code>", parse_mode="HTML")
+        await message.answer("⚠️ Qo'llanilishi: <code>/delvip USER_ID</code>", parse_mode="HTML")
 
-# ⚡ Admin: Yangi kino va treyler qo meytida tarqatish
+# ⚡ Admin: Yangi kino va treyler tarqatish
 @dp.message(F.text == "⚡ Kino Qo'shish & Treyler")
 async def add_movie_with_trailer(message: types.Message):
-    # Misol uchun yangi kino ma'lumotlari
     movie_title = "AOT: Final Season"
     movie_code = "105"
-    trailer_url = "https://youtube.com" # Treyler havolasi
+    trailer_url = "https://youtube.com"
 
-    # VIP foydalanuvchilar uchun chiroyli inline tugma
     trailer_inline_btn = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🍿 Treylerni Tomosha Qilish", url=trailer_url)],
@@ -87,7 +85,6 @@ async def add_movie_with_trailer(message: types.Message):
         ]
     )
 
-    # VIP a'zolarga eksklyuziv bildirishnoma yuborish
     vip_count = 0
     for vip_id in VIP_USERS:
         try:
@@ -130,21 +127,15 @@ async def vip_info(message: types.Message):
     )
     await message.answer(info_text, parse_mode="HTML")
 
-# Qolgan matnlar uchun (kino kodi kiritilganda)
+# Qolgan matnlar uchun
 @dp.message()
 async def echo_all(message: types.Message):
     await message.answer(f"Siz yozdingiz: {message.text}\n\n<i>Kino kodini kiritsangiz kino chiqarib beriladi!</i>", parse_mode="HTML")
 
-# Botni ishga tushirish
+# Botni ishga tushirish funksiyasi
 async def main():
     logging.basicConfig(level=logging.INFO)
     print("Bot ishga tushdi...")
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
-    # Eski so'rovlarni o'chirish (webhookni tozalash)
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
